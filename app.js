@@ -428,7 +428,7 @@ function answerQuestion(question, result) {
   }
 
   if (q.includes("donut") || q.includes("микс") || q.includes("платеж")) {
-    return narrative.charts.find((item) => item.startsWith("Платежный микс")) || "Donut показывает долю кредитной карты, BNPL и альтернативных оплат за выбранную неделю.";
+    return narrative.charts.find((item) => item.startsWith("Платежный микс")) || "Кольцевая диаграмма показывает долю кредитной карты, BNPL и альтернативных оплат за выбранную неделю.";
   }
 
   if (q.includes("отчет") || q.includes("сводк")) {
@@ -898,7 +898,7 @@ function renderDonut() {
     .join("");
   elements.donutSubtitle.textContent = `${state.vertical}, ${state.week}`;
   elements.donutChart.innerHTML = `
-    <svg viewBox="0 0 260 292" role="img" aria-label="Donut платежного микса">
+    <svg viewBox="0 0 260 292" role="img" aria-label="Кольцевая диаграмма платежного микса">
       ${arcs}
       <text x="130" y="120" text-anchor="middle" class="donut-value">${formatPct(weekly.target_rate)}</text>
       <text x="130" y="140" text-anchor="middle" class="donut-label">целевые</text>
