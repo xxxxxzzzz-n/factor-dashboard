@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Дашборд факторного анализа продуктовых метрик</title>
+    <link rel="stylesheet" href="styles.css?v=5" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand-block">
+          <div class="brand-mark">DM</div>
+          <div>
+            <p class="eyebrow">DigestMaker</p>
+            <h1>Факторный анализ продуктовых метрик</h1>
+          </div>
+        </div>
+
+        <section class="control-panel" aria-label="Фильтры">
+          <label>
+            <span>Неделя</span>
+            <select id="weekSelect"></select>
+          </label>
+          <label>
+            <span>Вертикаль</span>
+            <select id="verticalSelect"></select>
+          </label>
+          <label>
+            <span>Метрика</span>
+            <select id="metricSelect"></select>
+          </label>
+        </section>
+
+        <section class="source-panel">
+          <h2>Данные</h2>
+          <dl>
+            <div>
+              <dt>Агрегат</dt>
+              <dd id="aggRows">—</dd>
+            </div>
+            <div>
+              <dt>Транзакции</dt>
+              <dd id="rawRows">—</dd>
+            </div>
+            <div>
+              <dt>Факторный JSON</dt>
+              <dd id="finalRows">—</dd>
+            </div>
+            <div>
+              <dt>Период</dt>
+              <dd id="dateRange">—</dd>
+            </div>
+          </dl>
+        </section>
+      </aside>
+
+      <main class="dashboard">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Автоматизированный мониторинг</p>
+            <h2 id="pageTitle">Обзор</h2>
+          </div>
+          <div class="status-strip">
+            <span id="aiStatus">AI аналитик: локальный режим</span>
+            <span id="calcStatus">Расчет: неделя к неделе</span>
+          </div>
+        </header>
+
+        <section class="kpi-grid" id="kpiGrid" aria-label="Ключевые показатели"></section>
+
+        <section class="workspace-grid">
+          <article class="panel trend-panel">
+            <div class="panel-head">
+              <div>
+                <h3>Динамика метрики</h3>
+                <p id="trendSubtitle">—</p>
+              </div>
+              <button class="ghost-button" id="resetToAlert" type="button">Критичный срез</button>
+            </div>
+            <div id="trendChart" class="chart-area"></div>
+          </article>
+
+          <article class="panel factor-panel">
+            <div class="panel-head">
+              <div>
+                <h3>Вклад факторов</h3>
+                <p id="factorSubtitle">—</p>
+              </div>
+            </div>
+            <div id="factorBars" class="factor-bars"></div>
+          </article>
+
+          <article class="panel ai-panel">
+            <div class="panel-head">
+              <div>
+                <h3>AI аналитик</h3>
+                <p>Сводка, гипотезы и LLM-контекст по выбранному срезу</p>
+              </div>
+            </div>
+            <div id="aiSummary" class="ai-summary"></div>
+            <div class="prompt-row">
+              <button class="chip-button" data-question="Почему изменилась метрика?">Почему?</button>
+              <button class="chip-button" data-question="Что проверить в первую очередь?">Что проверить?</button>
+              <button class="chip-button" data-question="Сформируй короткий отчет для продакта">Отчет</button>
+            </div>
+            <div class="chat-box" id="chatBox"></div>
+            <form class="chat-form" id="chatForm">
+              <input id="chatInput" type="text" placeholder="Спросить по выбранному срезу" />
+              <button type="submit">Отправить</button>
+            </form>
+            <button class="ghost-button wide" id="copyPrompt" type="button">Скопировать LLM prompt</button>
+          </article>
+        </section>
+
+        <section class="detail-grid">
+          <article class="panel">
+            <div class="panel-head">
+              <div>
+                <h3>Матрица изменений</h3>
+                <p>WoW-дельта выбранной метрики по вертикалям</p>
+              </div>
+            </div>
+            <div id="heatmap" class="heatmap"></div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-head">
+              <div>
+                <h3>Сигналы для разбора</h3>
+                <p>Крупнейшие падения и рост по всем срезам</p>
+              </div>
+            </div>
+            <div id="alertsList" class="alerts-list"></div>
+          </article>
+        </section>
+
+        <section class="chart-grid">
+          <article class="panel">
+            <div class="panel-head">
+              <div>
+                <h3>Сравнение вертикалей</h3>
+                <p id="verticalCompareSubtitle">Выбранная неделя и метрика</p>
+              </div>
+            </div>
+            <div id="verticalCompareChart" class="ranking-chart"></div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-head">
+              <div>
+                <h3>Платежный микс</h3>
+                <p>Кредитная карта, BNPL и альтернативные оплаты по неделям</p>
+              </div>
+            </div>
+            <div id="paymentMixChart" class="mix-chart"></div>
+          </article>
+        </section>
+
+        <section class="deep-chart-grid">
+          <article class="panel waterfall-panel">
+            <div class="panel-head">
+              <div>
+                <h3>Водопад декомпозиции</h3>
+                <p id="waterfallSubtitle">Старт → вклад факторов → итог</p>
+              </div>
+            </div>
+            <div id="waterfallChart" class="waterfall-chart"></div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-head">
+              <div>
+                <h3>Объёмы: заказы и GMV</h3>
+                <p>Столбцы заказов и линия оборота по неделям</p>
+              </div>
+            </div>
+            <div id="volumeChart" class="volume-chart"></div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-head">
+              <div>
+                <h3>Donut платёжного микса</h3>
+                <p id="donutSubtitle">Выбранная неделя</p>
+              </div>
+            </div>
+            <div id="donutChart" class="donut-chart"></div>
+          </article>
+        </section>
+
+        <section class="panel table-panel">
+          <div class="panel-head">
+            <div>
+              <h3>Таблица факторов</h3>
+              <p id="tableSubtitle">—</p>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Измерение</th>
+                  <th>Сегмент</th>
+                  <th>Вклад</th>
+                  <th>Доля заказов</th>
+                  <th>Ставка сегмента</th>
+                  <th>Изменение ставки</th>
+                </tr>
+              </thead>
+              <tbody id="factorTable"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="method-grid">
+          <article class="panel method-panel">
+            <div class="panel-head">
+              <div>
+                <h3>Состав дашборда</h3>
+                <p>Что нужно показывать в проекте</p>
+              </div>
+            </div>
+            <div class="method-columns">
+              <div>
+                <h4>Данные</h4>
+                <ul>
+                  <li>Сырые транзакции: дата, вертикаль, сумма, способ оплаты, статус заказа.</li>
+                  <li>Агрегаты по неделям и сегментам: платформа, тип пользователя, кешбек, оффер, подписка.</li>
+                  <li>Результат факторного анализа: delta, top positive/negative factors, diagnostics, `result_json`.</li>
+                </ul>
+              </div>
+              <div>
+                <h4>Графики</h4>
+                <ul>
+                  <li>Тренд метрики и WoW-изменение.</li>
+                  <li>Бар-чарт вкладов факторов и сравнение вертикалей.</li>
+                  <li>Матрица аномалий по вертикалям и неделям.</li>
+                  <li>Платежный микс: кредитная карта, BNPL, альтернативные оплаты.</li>
+                  <li>Waterfall-декомпозиция: старт метрики, вклады факторов, итог.</li>
+                  <li>Объемы: заказы столбцами и GMV линией.</li>
+                  <li>Таблица сегментов с долей и вкладом.</li>
+                </ul>
+              </div>
+              <div>
+                <h4>AI-слой</h4>
+                <ul>
+                  <li>Автоматическая сводка причины изменения и графиков.</li>
+                  <li>Гипотезы для продакта и аналитика.</li>
+                  <li>Контекст для LLM/RAG по выбранному срезу и waterfall.</li>
+                </ul>
+              </div>
+            </div>
+          </article>
+        </section>
+      </main>
+    </div>
+
+    <script src="data/dashboard_data.js?v=5"></script>
+    <script src="app.js?v=5"></script>
+  </body>
+</html>
