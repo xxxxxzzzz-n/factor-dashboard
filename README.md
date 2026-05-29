@@ -14,7 +14,7 @@
 
 ## Запуск дашборда
 
-Дашборд реализован как статический веб-сайт и доступен по ссылке: `https://xxxxxzzzz-n.github.io/factor-dashboard/`
+Дашборд реализован как статический веб-сайт и доступен по ссылке: `[https://xxxxxzzzz-n.github.io/factor-dashboard/](https://xxxxxzzzz-n.github.io/factor-dashboard/)`
 
 ## Используемые технологии
 
