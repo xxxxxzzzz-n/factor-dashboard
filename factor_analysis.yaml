@@ -1,0 +1,312 @@
+title: Факторный анализ для курсовой
+paragraphs:
+  - sid: 019cfb12-e7a2-7ed6-844b-a790537ef008
+    title: Настройки
+    shebang: python
+    code: "#conda activate dlh  \nfrom dlh.api.v2 import read_data, write_data"
+    isEnabled: true
+  - sid: 019e69c6-2405-7281-ac00-c1d3988c63e5
+    title: Загрузка данных из csv
+    shebang: python
+    code: "import tinkoff as tf\nimport pandas as pd\nimport tcloud\n\n# \nfile_name = tcloud.download(path = 'raw_transaction_data.csv', login = Z_ENV_NASTYA_LOGIN, password = Z_ENV_NASTYA_PASS, site = 'share.tbank.ru')\ndf = pd.read_csv(file_name)\ndf.head()\n\ntf.df_to_gp(\n    df,\n    table = 'raw_transaction_data',\n    gp_service = \"nfs\",\n    if_exists = \"replace\",\n    encoding_errors = \"ignore\")"
+    isEnabled: true
+  - sid: 019cfb19-8dcc-733e-b5c6-307b64d5c0e0
+    title: base
+    shebang: gp
+    code: "drop table if exists base;\ncreate table base as\n\nselect \n    date_trunc('week', created_dttm::timestamp)::date as week_dt,\n    case \n        when source_system_cd = 'AVS' then 'Avia'\n        else source_system_cd\n    end as vertical,\n    program_product_desc as platform,\n    case \n        when first_order_dttm::date  = created_dttm::date \n        then 'new'\n        else 'old'\n    end as user_type,\n    nominal_price_rub_amt as gmv,\n    -- упрощаем факторы (MVP)\n    (high_category_loyalty_accrual_rub_amt > 0)::int as has_high_category,\n    (bank_offer_loyalty_accrual_rub_amt > 0)::int as has_bank_offer,\n    coalesce(bundle_nm, 'unknown') as subscription_type,\n\n    case \n        when pos_application_rk is not null then 'POS'\n        when bnpl_order_rk is not null or payment_method_cd = 'BNP' then 'BNPL'\n        else financial_account_type_\n    end as payment_type\n\nfrom raw_transaction_data\nwhere order_status = 'SUC';"
+    isEnabled: true
+  - sid: 019d0ad1-2f49-7716-9f76-de5ef98b84c0
+    title: full_grid
+    shebang: gp
+    code: |-
+      drop table if exists dim_verticals;
+      create table dim_verticals as
+
+      select distinct vertical from base
+      where vertical is not null and vertical not in ('Аренда', 'Т-Авто');
+
+      drop table if exists dim_metrics;
+      create table dim_metrics as
+
+      select 'alt_payment' as metric_type
+      union all
+      select 'credit_card';
+
+      drop table if exists full_grid;
+      create table full_grid as
+
+      select
+          w.week_dt,
+          v.vertical,
+          m.metric_type
+      from (select distinct week_dt from base) w
+      cross join dim_verticals v
+      cross join dim_metrics m;
+    isEnabled: true
+  - sid: 019d0a6f-73e8-7566-be06-93a319714b2f
+    title: normalization
+    shebang: gp
+    code: "drop table if exists base_long;\ncreate table base_long as\n\nselect week_dt, vertical, gmv, payment_type,\n       'platform' as dimension, platform as segment\nfrom base\n\nunion all\nselect week_dt, vertical, gmv, payment_type,\n       'user_type', user_type\nfrom base\n\nunion all\nselect week_dt, vertical, gmv, payment_type,\n       'has_bank_offer', case when has_bank_offer = 1 then '1' else '0' end as has_bank_offer\nfrom base\n\nunion all\nselect week_dt, vertical, gmv, payment_type,\n       'has_high_category', case when has_high_category = 1 then '1' else '0' end as has_high_category \nfrom base\n\nunion all\nselect week_dt, vertical, gmv, payment_type,\n       'subscription_type', subscription_type\nfrom base;"
+    isEnabled: true
+  - sid: 019cfab1-c033-7219-924a-c6c3a4f19c0f
+    title: agg
+    shebang: gp
+    code: |-
+      drop table if exists agg;
+      create table agg as
+
+      select
+          week_dt,
+          vertical,
+          dimension,
+          segment,
+
+          sum(gmv) as gmv_total,
+          sum(gmv) filter (where payment_type in ('POS','BNPL')) as gmv_alt,
+          sum(gmv) filter (where payment_type = 'CCR') as gmv_cc
+
+      from base_long
+      group by 1,2,3,4;
+    isEnabled: true
+  - sid: 019cfab2-164a-7b08-875d-6a912acbe0f7
+    title: metrics
+    shebang: gp
+    code: |-
+      drop table if exists metrics;
+      create table metrics as
+
+      select
+          *,
+          coalesce(gmv_alt, 0) / nullif(gmv_total, 0) as alt_payment_pct,
+          coalesce(gmv_cc, 0) / nullif(gmv_total, 0) as cc_pct
+      from agg;
+    isEnabled: true
+  - sid: 019cfab2-3b05-712c-b0e8-c385da1e2244
+    title: lag
+    shebang: gp
+    code: |-
+      drop table if exists with_lag;
+      create table with_lag as
+
+      select
+          *,
+
+          lag(gmv_total) over (
+              partition by vertical, dimension, segment
+              order by week_dt
+          ) as gmv_prev,
+
+          lag(alt_payment_pct) over (
+              partition by vertical, dimension, segment
+              order by week_dt
+          ) as alt_prev,
+
+          lag(cc_pct) over (
+              partition by vertical, dimension, segment
+              order by week_dt
+          ) as cc_prev
+
+      from metrics;
+    isEnabled: true
+  - sid: 019cfab2-63c6-7cc4-87be-b8c27f099710
+    title: factors
+    shebang: gp
+    code: |-
+      drop table if exists factors;
+      create table factors as
+
+      select
+          week_dt,
+          vertical,
+          dimension,
+          segment,
+
+          'alt_payment' as metric_type,
+
+          (alt_payment_pct - alt_prev) as delta,
+
+          gmv_prev / sum(gmv_prev) over (
+              partition by week_dt, vertical, dimension
+          ) as share_prev,
+
+          (alt_payment_pct - alt_prev)
+              * (gmv_prev / sum(gmv_prev) over (
+                  partition by week_dt, vertical, dimension
+              )) as contribution
+
+      from with_lag
+      where gmv_prev is not null and alt_prev is not null
+
+      union all
+
+      select
+          week_dt,
+          vertical,
+          dimension,
+          segment,
+
+          'credit_card',
+
+          (cc_pct - cc_prev),
+
+          gmv_prev / sum(gmv_prev) over (
+              partition by week_dt, vertical, dimension
+          ),
+
+          (cc_pct - cc_prev)
+              * (gmv_prev / sum(gmv_prev) over (
+                  partition by week_dt, vertical, dimension
+              ))
+
+      from with_lag
+      where gmv_prev is not null and cc_prev is not null;
+    isEnabled: true
+  - sid: 019cfab2-85ce-75d9-a67b-b9fbeb1fd023
+    title: filter
+    shebang: gp
+    code: |-
+      drop table if exists factors_filtered;
+      create table factors_filtered as
+
+      select *
+      from factors
+      where share_prev > 0.01
+        and abs(contribution) > 0.001;
+    isEnabled: true
+  - sid: 019d0add-40b0-7279-afc6-a2417aec5d4b
+    title: factors_agg
+    shebang: gp
+    code: "drop table if exists factors_agg;\ncreate table factors_agg as\n\nselect\n    week_dt,\n    vertical,\n    metric_type,\n    dimension,\n    segment,\n\n    sum(contribution) as contribution,\n    avg(share_prev) as share_prev,  \n    abs(sum(contribution)) as abs_contribution\n\nfrom factors_filtered\ngroup by 1,2,3,4,5;"
+    isEnabled: true
+  - sid: 019d0573-3d31-79a2-b5b2-efd5e00e213b
+    title: ranked
+    shebang: gp
+    code: |-
+      drop table if exists ranked_dim;
+      create table ranked_dim as
+
+      select *
+      from (
+          select
+              *,
+              row_number() over (
+                  partition by week_dt, vertical, metric_type, dimension
+                  order by abs(contribution) desc
+              ) as rn_dim
+          from factors_agg
+      ) t
+      where rn_dim = 1;
+
+      drop table if exists ranked;
+      create table ranked as
+
+      select
+          *,
+          row_number() over (
+              partition by week_dt, vertical, metric_type
+              order by abs(contribution) desc
+          ) as rn
+      from ranked_dim;
+    isEnabled: true
+  - sid: 019d0a7c-5aa9-7c1d-a430-7be3ab46891e
+    title: metrics_summary
+    shebang: gp
+    code: |-
+      drop table if exists metrics_summary;
+      create table metrics_summary as
+
+      select
+          g.week_dt,
+          g.vertical,
+
+          'alt_payment' as metric_type,
+
+          coalesce(sum(gmv_alt), 0) / nullif(sum(gmv_total), 0) as metric_value,
+
+          lag(
+              coalesce(sum(gmv_alt), 0) / nullif(sum(gmv_total), 0)
+          ) over (partition by g.vertical order by g.week_dt) as prev_value
+
+      from full_grid g
+      left join agg a
+          on g.week_dt = a.week_dt
+          and g.vertical = a.vertical
+      group by 1,2
+
+      union all
+
+      select
+          g.week_dt,
+          g.vertical,
+
+          'credit_card',
+
+          coalesce(sum(gmv_cc), 0) / nullif(sum(gmv_total), 0),
+
+          lag(
+              coalesce(sum(gmv_cc), 0) / nullif(sum(gmv_total), 0)
+          ) over (partition by g.vertical order by g.week_dt)
+
+      from full_grid g
+      left join agg a
+          on g.week_dt = a.week_dt
+          and g.vertical = a.vertical
+      group by 1,2;
+    isEnabled: true
+  - sid: 019d0a7c-b5df-711a-b48d-29053666a788
+    title: diagnostics
+    shebang: gp
+    code: |-
+      drop table if exists dgn;
+      create table dgn as
+
+      select
+          week_dt,
+          vertical,
+
+          sum(gmv) filter (where user_type = 'new') / nullif(sum(gmv), 0) as new_user_share,
+          sum(gmv) filter (where has_bank_offer = 1) / nullif(sum(gmv), 0) as bank_offer_share,
+          coalesce(sum(gmv) filter (where payment_type in ('POS','BNPL')), 0) / nullif(sum(gmv), 0) as alt_payment_share
+
+      from base
+      group by 1,2;
+    isEnabled: true
+  - sid: 019d0a7c-f2d2-7c01-8926-095984fe4aea
+    title: llm_input
+    shebang: gp
+    code: "drop table if exists llm_input;\ncreate table llm_input as\n\nwith base as (\n    select\n        m.week_dt,\n        m.vertical,\n        m.metric_type,\n\n        m.metric_value,\n        m.prev_value,\n\n        (m.metric_value - m.prev_value) as delta,\n        (m.metric_value - m.prev_value) / nullif(m.prev_value,0) as delta_pct,\n\n        d.new_user_share,\n        d.bank_offer_share,\n        d.alt_payment_share,\n\n        r.dimension,\n        r.segment,\n        r.contribution,\n        r.share_prev,\n        r.rn,\n        least(\n            abs(r.contribution) / nullif(abs(m.metric_value - m.prev_value),0),\n            1\n        ) as impact\n\n    from metrics_summary m\n    left join ranked r\n        on m.week_dt = r.week_dt\n        and m.vertical = r.vertical\n        and m.metric_type = r.metric_type\n    left join dgn d\n        on m.week_dt = d.week_dt\n        and m.vertical = d.vertical\n\n    where m.prev_value is not null\n      and not (m.metric_value = 0 and m.prev_value = 0)\n)\n\nselect\n    week_dt,\n    vertical,\n    metric_type,\n\n    metric_value,\n    prev_value,\n    delta,\n    delta_pct,\n\n    -- 🔴 negative\n    coalesce(\n        json_agg(\n            json_build_object(\n                'dimension', dimension,\n                'segment', segment,\n                'contribution', contribution,\n                'share', share_prev,\n                'impact', impact\n            )\n            order by abs(contribution) desc\n        ) filter (\n            where rn <= 5\n              and contribution < 0\n              and impact > 0.05   \n        ),\n        '[]'::json\n    ) as top_negative,\n\n    -- 🟢 positive\n    coalesce(\n        json_agg(\n            json_build_object(\n                'dimension', dimension,\n                'segment', segment,\n                'contribution', contribution,\n                'share', share_prev,\n                'impact', impact\n            )\n            order by abs(contribution) desc\n        ) filter (\n            where rn <= 5\n              and contribution > 0\n              and impact > 0.05\n        ),\n        '[]'::json\n    ) as top_positive,\n\n    new_user_share,\n    bank_offer_share,\n    alt_payment_share\n\nfrom base\ngroup by\n    week_dt,\n    vertical,\n    metric_type,\n    metric_value,\n    prev_value,\n    delta,\n    delta_pct,\n    new_user_share,\n    bank_offer_share,\n    alt_payment_share;"
+    isEnabled: true
+  - sid: 019cfab8-9fa8-787a-91fc-4dd5e567fc6c
+    title: перенос в json
+    shebang: gp
+    code: |-
+      drop table if exists usr_wrk.factor_results;
+      create table usr_wrk.factor_results as
+
+      select
+          week_dt,
+
+          json_build_object(
+              'week', week_dt,
+              'vertical', vertical,
+              'metric', metric_type,
+
+              'metric_value', metric_value,
+              'prev_value', prev_value,
+              'delta', delta,
+              'delta_pct', delta_pct,
+
+              'top_negative_factors', top_negative,
+              'top_positive_factors', top_positive,
+
+              'diagnostics',
+                  json_build_object(
+                      'new_user_share', new_user_share,
+                      'bank_offer_share', bank_offer_share,
+                      'alt_payment_share', alt_payment_share
+                  )
+
+          )::text as result_json
+
+      from llm_input;
+    isEnabled: true
