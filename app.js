@@ -1,10 +1,30 @@
 const DATA = window.DASHBOARD_DATA;
 
-const state = {
-  week: DATA.alerts.find((item) => item.direction === "drop")?.week || DATA.meta.weeks.at(-1),
-  vertical: DATA.alerts.find((item) => item.direction === "drop")?.vertical || DATA.meta.verticals[1],
-  metric: DATA.alerts.find((item) => item.direction === "drop")?.metric || DATA.metrics[0].id,
-};
+// Выбираем стартовый срез так, чтобы водопад на первом экране был наглядным:
+// берём заметное падение, но из крупного среза (а не из мелкой вертикали с шумом).
+function pickInitialSlice() {
+  const drops = (DATA.alerts || []).filter((item) => item.direction === "drop");
+  if (!drops.length) {
+    return {
+      week: DATA.meta.weeks.at(-1),
+      vertical: DATA.meta.verticals[1] || DATA.meta.verticals[0],
+      metric: DATA.metrics[0].id,
+    };
+  }
+  // объём заказов для каждой вертикали/недели, чтобы отсеять мелкие шумные срезы
+  const ordersOf = (week, vertical) => {
+    const row = (DATA.weekly || []).find((r) => r.week === week && r.vertical === vertical);
+    return row ? Number(row.orders || 0) : 0;
+  };
+  const ranked = drops
+    .map((d) => ({ ...d, orders: ordersOf(d.week, d.vertical) }))
+    .sort((a, b) => b.orders - a.orders);
+  // первый среди крупных по объёму
+  const chosen = ranked[0];
+  return { week: chosen.week, vertical: chosen.vertical, metric: chosen.metric };
+}
+
+const state = pickInitialSlice();
 
 let activeContextId = "";
 let chatMessages = [];
@@ -671,6 +691,11 @@ function shortFactorLabel(item) {
   return `${item.dimension_label.split(" ")[0]} · ${segment}`;
 }
 
+function shortSegmentLabel(item) {
+  const seg = String(item.segment_label || "");
+  return seg.length > 16 ? `${seg.slice(0, 15)}…` : seg;
+}
+
 function buildWaterfallSteps(result) {
   const sourceFactors = result.waterfall_factors?.length ? result.waterfall_factors : result.factors;
   const grouped = sourceFactors.reduce((acc, item) => {
@@ -692,7 +717,7 @@ function buildWaterfallSteps(result) {
   const residual = Number(result.delta || 0) - shownSum;
   const contributionSteps = factors.map((item) => ({
     type: "factor",
-    label: shortFactorLabel(item),
+    label: shortSegmentLabel(item),
     fullLabel: `${item.dimension_label} · ${item.segment_label}`,
     value: Number(item.contribution || 0),
   }));
@@ -715,7 +740,7 @@ function renderWaterfall(result) {
   const steps = buildWaterfallSteps(result);
   const width = 900;
   const height = 292;
-  const margin = { top: 24, right: 24, bottom: 58, left: 54 };
+  const margin = { top: 24, right: 24, bottom: 70, left: 54 };
   const plotW = width - margin.left - margin.right;
   const plotH = height - margin.top - margin.bottom;
   const values = [Number(result.prev_value || 0), Number(result.metric_value || 0)];
@@ -763,7 +788,7 @@ function renderWaterfall(result) {
           <title>${escapeHtml(step.fullLabel)}: ${escapeHtml(valueLabel)}</title>
           <rect x="${x}" y="${y1}" width="${barW}" height="${h}" rx="5" fill="${fill}"></rect>
           <text x="${x + barW / 2}" y="${Math.max(14, y1 - 7)}" text-anchor="middle" class="waterfall-value">${escapeHtml(valueLabel)}</text>
-          <text x="${x + barW / 2}" y="${height - 30}" text-anchor="middle" class="waterfall-label">${escapeHtml(step.label)}</text>
+          <text x="${x + barW / 2}" y="${height - 34}" text-anchor="end" class="waterfall-label" transform="rotate(-22 ${x + barW / 2} ${height - 34})">${escapeHtml(step.label)}</text>
         </g>
       `;
     })
@@ -840,8 +865,8 @@ function renderVolumeChart() {
   elements.volumeChart.innerHTML = `
     <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Заказы и GMV">
       <line x1="${margin.left}" y1="${margin.top + plotH}" x2="${width - margin.right}" y2="${margin.top + plotH}" stroke="#3b3f3d"></line>
-      <text x="8" y="${margin.top + 5}" class="volume-label">${formatInt(maxOrders)} заказов</text>
-      <text x="${width - margin.right + 8}" y="${margin.top + 5}" class="volume-label">${formatMoneyShort(maxGmv)} ₽</text>
+      <text x="${margin.left}" y="${margin.top - 8}" text-anchor="start" class="volume-label" fill="#66a6ff">${formatInt(maxOrders)} зак.</text>
+      <text x="${width - margin.right}" y="${margin.top - 8}" text-anchor="end" class="volume-label" fill="#57c59b">${formatMoneyShort(maxGmv)} ₽</text>
       ${bars}
       <polyline points="${points}" fill="none" stroke="#57c59b" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></polyline>
       ${rows
